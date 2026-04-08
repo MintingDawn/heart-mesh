@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>写实心脏 · 网格血管 · 强劲心跳</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #0a0a0a;
+            font-family: 'Segoe UI', 'Arial', sans-serif;
+        }
+        #info {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #ff9999;
+            font-size: 15px;
+            text-shadow: 0 0 15px #ff0000;
+            pointer-events: none;
+            z-index: 10;
+            background: rgba(30,0,0,0.6);
+            padding: 8px 20px;
+            border-radius: 40px;
+            backdrop-filter: blur(5px);
+            border-left: 4px solid #ff4d4d;
+        }
+        #instruction {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            color: #ffd966;
+            font-size: 15px;
+            text-shadow: 0 0 12px #ffb300;
+            pointer-events: none;
+            z-index: 10;
+            background: rgba(40,20,0,0.6);
+            padding: 8px 20px;
+            border-radius: 40px;
+            backdrop-filter: blur(5px);
+            border-right: 4px solid #ffd966;
+        }
+        #status {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: #eee;
+            font-size: 14px;
+            background: rgba(20,20,20,0.7);
+            padding: 6px 18px;
+            border-radius: 30px;
+            pointer-events: none;
+            z-index: 10;
+            backdrop-filter: blur(5px);
+            border: 1px solid #ff6666;
+        }
+        button {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 20;
+            background: #aa2222;
+            color: white;
+            border: none;
+            padding: 12px 28px;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 0 25px #ff0000aa;
+            border: 1px solid #ffaaaa;
+            backdrop-filter: blur(4px);
+            background: rgba(180, 30, 30, 0.9);
+            transition: 0.2s;
+            letter-spacing: 1px;
+        }
+        button:hover {
+            background: #dd3333;
+            box-shadow: 0 0 35px #ff4444;
+            transform: scale(1.02);
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/addons/p5.sound.min.js"></script>
+</head>
+<body>
+    <button id="audio-btn">🔊 启用强劲心跳 & 音效</button>
+    <div id="info">❤️ 写实心脏 · 血管网格</div>
+    <div id="instruction">🖱️ 鼠标撕裂网格 · 💰 金币流淌</div>
+    <div id="status">⚡ 心跳正常 · 悬停加速</div>
+
+    <script>
+        (function() {
+            // ---------- 全局参数 ----------
+            let basePoints = [];
+            let displacedPoints = [];
+            
+            const U_SEG = 48;            // 高精度网格
+            const V_SEG = 28;
+            
+            let centerX, centerY;
+            const BASE_SIZE = 18;
+            
+            let beatPhase = 0;
+            let beatSpeed = 0.06;
+            const BEAT_AMP = 0.04;
+            
+            let repelRadius = 90;
+            let tearStrength = 2.6;
+            let mousePos;
+            let isHovering = false;
+            
+            let coins = [];
+            const MAX_COINS = 450;
+            const GRAVITY = 0.16;
+            const COIN_TILT = 0.9;
+            
+            // 音频
+            let audioEnabled = false;
+            let heartSoundLow, heartSoundHigh, bloodFlowSound;
+            let coinSound;
+            let heartLoop;
+            let currentBpm = 68;
+            
+            // 血管纹理控制点 (用于绘制额外曲线)
+            let vesselPaths = [];
+            
+            // ---------- 写实心脏参数函数 (前倾桃子形，心尖左下，心底右上) ----------
+            function realisticHeart(t, r) {
+                // t: 0~1 映射到角度 0~TWO_PI，但我们将调整基础形状并旋转
+                const angle = t * TWO_PI;
+                
+                // 基础心形，但修改为更接近真实比例：上宽下窄，心尖偏移
+                // 使用改良版参数方程，并加入不对称
+                let x0 = 16 * pow(sin(angle), 3);
+                let y0 = 13 * cos(angle) - 5 * cos(2*angle) - 2*cos(3*angle) - cos(4*angle);
+                
+                // 调整比例：使上部更宽，下部更尖并偏左
+                let ax = x0 * 1.1;
+                let ay = y0 * 1.0;
+                
+                // 右心房 (画面左侧上部) 隆起
+                if (angle > 0.8 && angle < 2.2) {
+                    let bump = sin(map(angle, 0.8, 2.2, 0, PI)) * 3.5;
+                    ax -= bump * 1.3;
+                    ay -= bump * 0.9;
+                }
+                // 左心房 (画面右侧上部) 隆起
+                if (angle > 4.0 && angle < 5.5) {
+                    let bump = sin(map(angle, 4.0, 5.5, 0, PI)) * 3.2;
+                    ax += bump * 1.2;
+                    ay -= bump * 1.0;
+                }
+                // 主动脉 / 肺动脉 (顶部)
+                if (angle > 5.7 || angle < 0.6) {
+                    let vessel = sin(map(angle, 5.7, TWO_PI+0.6, 0, PI)) * 4.5;
+                    ay -= vessel * 1.5;
+                    ax += vessel * 0.5;
+                }
+                // 左心室 (右下) 饱满
+                if (angle > 3.5 && angle < 5.0) {
+                    ax += 1.5;
+                    ay += 0.9;
+                }
+                // 右心室 (左下) 
+                if (angle > 1.7 && angle < 3.2) {
+                    ax -= 1.0;
+                    ay += 0.6;
+                }
+                // 心尖向左下偏移
+                ax -= 0.8;
+                ay += 0.5;
+                
+                // 应用径向缩放
+                let px = ax * r;
+                let py = ay * r;
+                
+                // 旋转整个心脏，使心尖指向左下方，心底朝右上方
+                // 旋转角度约 -25度 (逆时针)
+                const rotAngle = -0.45; 
+                const cosR = cos(rotAngle);
+                const sinR = sin(rotAngle);
+                let rx = px * cosR - py * sinR;
+                let ry = px * sinR + py * cosR;
+                
+                // 再微调使心尖更偏左下
+                rx -= 1.5 * r;
+                ry += 1.2 * r;
+                
+                return createVector(rx, ry);
+            }
+            
+            // 生成血管纹理路径 (基于心脏表面轮廓的偏移)
+            function generateVesselPaths() {
+                vesselPaths = [];
+                // 左冠状动脉前降支 (从主动脉根部向左下绕行)
+                let path1 = [];
+                for (let i = 0; i <= 30; i++) {
+                    let t = map(i, 0, 30, 0.2, 0.7);
+                    let vec = realisticHeart(t, 0.85);
+                    path1.push(vec);
+                }
+                vesselPaths.push(path1);
+                
+                // 右冠状动脉 (向右绕行)
+                let path2 = [];
+                for (let i = 0; i <= 25; i++) {
+                    let t = map(i, 0, 25, 0.6, 0.95);
+                    let vec = realisticHeart(t, 0.8);
+                    path2.push(vec);
+                }
+                vesselPaths.push(path2);
+                
+                // 心大静脉 (沿左侧)
+                let path3 = [];
+                for (let i = 0; i <= 35; i++) {
+                    let t = map(i, 0, 35, 0.1, 0.5);
+                    let vec = realisticHeart(t, 0.9);
+                    path3.push(vec);
+                }
+                vesselPaths.push(path3);
+            }
+            
+            // 判断点是否在心脏内
+            function isInsideHeart(px, py) {
+                let inside = false;
+                const steps = 80;
+                let prevX, prevY;
+                const scale = 1.0 + BEAT_AMP * sin(beatPhase);
+                for (let i = 0; i <= steps; i++) {
+                    let vec = realisticHeart(i/steps, 1.0);
+                    let x = centerX + vec.x * BASE_SIZE * scale;
+                    let y = centerY + vec.y * BASE_SIZE * scale;
+                    if (i > 0) {
+                        if ((y > py) !== (prevY > py)) {
+                            let intersectX = prevX + (py - prevY) * (x - prevX) / (y - prevY);
+                            if (intersectX > px) inside = !inside;
+                        }
+                    }
+                    prevX = x; prevY = y;
+                }
+                return inside;
+            }
+            
+            // 初始化网格
+            function initMesh() {
+                for (let i = 0; i <= U_SEG; i++) {
+                    basePoints[i] = [];
+                    displacedPoints[i] = [];
+                    for (let j = 0; j <= V_SEG; j++) {
+                        basePoints[i][j] = createVector();
+                        displacedPoints[i][j] = createVector();
+                    }
+                }
+                generateVesselPaths();
+            }
+            
+            // 更新基准点 (心跳)
+            function updateBasePoints() {
+                const scale = 1.0 + BEAT_AMP * sin(beatPhase);
+                for (let i = 0; i <= U_SEG; i++) {
+                    const t = i / U_SEG;
+                    for (let j = 0; j <= V_SEG; j++) {
+                        const r = j / V_SEG;
+                        const vec = realisticHeart(t, r);
+                        const px = centerX + vec.x * BASE_SIZE * scale;
+                        const py = centerY + vec.y * BASE_SIZE * scale;
+                        basePoints[i][j].set(px, py);
+                        displacedPoints[i][j].set(px, py);
+                    }
+                }
+            }
+            
+            // 撕裂效果
+            function applyTearAndSpawn() {
+                if (mouseX > 0 && mouseX < width && mouseY > 0 && mouseY < height) {
+                    mousePos.set(mouseX, mouseY);
+                    const hover = isInsideHeart(mouseX, mouseY);
+                    if (hover !== isHovering) {
+                        isHovering = hover;
+                        document.getElementById('status').innerHTML = hover ? '💓 心跳加速 (悬停中)' : '⚡ 心跳正常';
+                    }
+                    
+                    for (let i = 0; i <= U_SEG; i++) {
+                        for (let j = 0; j <= V_SEG; j++) {
+                            const base = basePoints[i][j];
+                            const d = dist(mouseX, mouseY, base.x, base.y);
+                            if (d < repelRadius) {
+                                const ang = atan2(base.y - mouseY, base.x - mouseX);
+                                const strength = (1 - d / repelRadius) * tearStrength * 24;
+                                const dx = cos(ang) * strength;
+                                const dy = sin(ang) * strength;
+                                displacedPoints[i][j].set(base.x + dx, base.y + dy);
+                                
+                                if (d < repelRadius * 0.65 && random() < 0.28 && coins.length < MAX_COINS) {
+                                    let spawnX = mouseX + random(-20, 20);
+                                    let spawnY = mouseY + random(-10, 30);
+                                    spawnCoin(spawnX, spawnY, true);
+                                }
+                            } else {
+                                displacedPoints[i][j].set(base.x, base.y);
+                            }
+                        }
+                    }
+                } else {
+                    isHovering = false;
+                    document.getElementById('status').innerHTML = '⚡ 心跳正常';
+                    for (let i = 0; i <= U_SEG; i++) {
+                        for (let j = 0; j <= V_SEG; j++) {
+                            displacedPoints[i][j].set(basePoints[i][j].x, basePoints[i][j].y);
+                        }
+                    }
+                }
+            }
+            
+            function spawnCoin(x, y, fromTear = false) {
+                let vx = random(0.5, 2.8) + COIN_TILT * 1.3;
+                let vy = random(1.8, 5.0);
+                if (fromTear) {
+                    vx += random(-2.0, 2.5);
+                    vy += random(-1.5, 2.0);
+                    if (audioEnabled) playCoinSound();
+                }
+                coins.push({
+                    pos: createVector(x, y),
+                    vel: createVector(vx, vy),
+                    size: random(9, 18),
+                    rot: random(TWO_PI),
+                    rotSpeed: random(-0.04, 0.04)
+                });
+            }
+            
+            function spawnCoinFromHeart() {
+                if (coins.length > MAX_COINS - 10) return;
+                const t = random(1);
+                const r = random(0.3, 0.95);
+                const vec = realisticHeart(t, r);
+                const scale = 1.0 + BEAT_AMP * sin(beatPhase);
+                const x = centerX + vec.x * BASE_SIZE * scale;
+                const y = centerY + vec.y * BASE_SIZE * scale;
+                spawnCoin(x, y, false);
+            }
+            
+            // ----- 强劲心跳音效 (更大声、更真实) -----
+            function initAudio() {
+                if (audioEnabled) return;
+                
+                // 主低频心跳 (咚~)
+                heartSoundLow = new p5.Oscillator('sine');
+                heartSoundLow.amp(0);
+                heartSoundLow.start();
+                
+                // 高频冲击 (怦!)
+                heartSoundHigh = new p5.Oscillator('triangle');
+                heartSoundHigh.amp(0);
+                heartSoundHigh.start();
+                
+                // 背景血液流动 (极低频噪声)
+                bloodFlowSound = new p5.Noise('brown');
+                bloodFlowSound.amp(0.03);
+                bloodFlowSound.start();
+                const bloodFilter = new p5.LowPass();
+                bloodFilter.freq(80);
+                bloodFlowSound.disconnect();
+                bloodFlowSound.connect(bloodFilter);
+                
+                // 金币声
+                coinSound = new p5.Noise('white');
+                coinSound.amp(0);
+                coinSound.start();
+                const coinFilter = new p5.LowPass();
+                coinFilter.freq(2000);
+                coinSound.disconnect();
+                coinSound.connect(coinFilter);
+                
+                audioEnabled = true;
+                document.getElementById('audio-btn').style.display = 'none';
+                startHeartLoop();
+            }
+            
+            function playHeartbeat() {
+                if (!audioEnabled) return;
+                
+                // 增大音量范围 (0.35 ~ 0.45)
+                // 第一声 (收缩期)
+                const env1Low = new p5.Envelope();
+                env1Low.setADSR(0.006, 0.12, 0.5, 0.15);
+                env1Low.setRange(0.45, 0);
+                heartSoundLow.freq(55);
+                heartSoundLow.amp(env1Low);
+                env1Low.play(heartSoundLow);
+                
+                const env1High = new p5.Envelope();
+                env1High.setADSR(0.003, 0.06, 0.25, 0.1);
+                env1High.setRange(0.30, 0);
+                heartSoundHigh.freq(110);
+                heartSoundHigh.amp(env1High);
+                env1High.play(heartSoundHigh);
+                
+                // 第二声 (舒张期，稍弱)
+                setTimeout(() => {
+                    if (!audioEnabled) return;
+                    const env2Low = new p5.Envelope();
+                    env2Low.setADSR(0.006, 0.12, 0.4, 0.15);
+                    env2Low.setRange(0.35, 0);
+                    heartSoundLow.freq(60);
+                    heartSoundLow.amp(env2Low);
+                    env2Low.play(heartSoundLow);
+                    
+                    const env2High = new p5.Envelope();
+                    env2High.setADSR(0.003, 0.06, 0.2, 0.1);
+                    env2High.setRange(0.22, 0);
+                    heartSoundHigh.freq(125);
+                    heartSoundHigh.amp(env2High);
+                    env2High.play(heartSoundHigh);
+                }, 140);
+            }
+            
+            function startHeartLoop() {
+                if (heartLoop) clearTimeout(heartLoop);
+                function beat() {
+                    if (!audioEnabled) return;
+                    const bpm = isHovering ? currentBpm * 1.8 : currentBpm;
+                    const interval = 60000 / bpm;
+                    playHeartbeat();
+                    heartLoop = setTimeout(beat, interval);
+                }
+                beat();
+            }
+            
+            function playCoinSound() {
+                if (!audioEnabled) return;
+                const env = new p5.Envelope();
+                env.setADSR(0.002, 0.03, 0.08, 0.03);
+                env.setRange(0.18, 0);
+                const osc = new p5.Oscillator('triangle');
+                osc.freq(random(1100, 1800));
+                osc.amp(env);
+                osc.start();
+                env.play(osc);
+                setTimeout(() => osc.stop(), 100);
+            }
+            
+            // ----- p5.js 主流程 -----
+            function setup() {
+                const w = max(windowWidth, 100);
+                const h = max(windowHeight, 100);
+                createCanvas(w, h);
+                
+                centerX = width / 2 + 10;
+                centerY = height / 2 - 10;
+                mousePos = createVector(centerX, centerY);
+                
+                initMesh();
+                strokeCap(ROUND);
+                strokeJoin(ROUND);
+                
+                for (let i = 0; i < 25; i++) spawnCoinFromHeart();
+            }
+            
+            function windowResized() {
+                resizeCanvas(max(windowWidth, 100), max(windowHeight, 100));
+                centerX = width / 2 + 10;
+                centerY = height / 2 - 10;
+                generateVesselPaths();
+            }
+            
+            function draw() {
+                background(10, 5, 5, 30); // 深红黑背景
+                
+                beatPhase += beatSpeed * (isHovering ? 1.8 : 1.0);
+                updateBasePoints();
+                applyTearAndSpawn();
+                
+                // 绘制半透明填充 (增强立体感)
+                noStroke();
+                fill(180, 30, 30, 15);
+                beginShape();
+                for (let i = 0; i <= U_SEG; i++) {
+                    const pt = displacedPoints[i][V_SEG];
+                    vertex(pt.x, pt.y);
+                }
+                endShape(CLOSE);
+                
+                // 绘制网格线 (红色)
+                stroke(220, 40, 40, 230);
+                strokeWeight(1.5);
+                noFill();
+                
+                // 纬线
+                for (let j = 0; j <= V_SEG; j++) {
+                    beginShape();
+                    for (let i = 0; i <= U_SEG; i++) {
+                        const pt = displacedPoints[i][j];
+                        vertex(pt.x, pt.y);
+                    }
+                    endShape(CLOSE);
+                }
+                // 经线
+                for (let i = 0; i < U_SEG; i++) {
+                    beginShape();
+                    for (let j = 0; j <= V_SEG; j++) {
+                        const pt = displacedPoints[i][j];
+                        vertex(pt.x, pt.y);
+                    }
+                    endShape();
+                }
+                
+                // 外轮廓加粗
+                strokeWeight(3.0);
+                stroke(255, 70, 70, 250);
+                beginShape();
+                for (let i = 0; i <= U_SEG; i++) {
+                    const pt = displacedPoints[i][V_SEG];
+                    vertex(pt.x, pt.y);
+                }
+                endShape(CLOSE);
+                
+                // 绘制主动脉/肺动脉延伸
+                strokeWeight(4);
+                stroke(200, 50, 50, 220);
+                const aortaBase = displacedPoints[0][V_SEG];
+                const aortaTip = createVector(centerX + 35, centerY - 70);
+                line(aortaBase.x, aortaBase.y, aortaTip.x, aortaTip.y);
+                
+                // 绘制血管纹理 (额外曲线)
+                stroke(180, 60, 60, 180);
+                strokeWeight(2.2);
+                noFill();
+                const scale = 1.0 + BEAT_AMP * sin(beatPhase);
+                for (let path of vesselPaths) {
+                    beginShape();
+                    for (let vec of path) {
+                        let x = centerX + vec.x * BASE_SIZE * scale;
+                        let y = centerY + vec.y * BASE_SIZE * scale;
+                        vertex(x, y);
+                    }
+                    endShape();
+                }
+                
+                // 金币更新绘制
+                for (let i = coins.length - 1; i >= 0; i--) {
+                    const c = coins[i];
+                    c.vel.y += GRAVITY;
+                    c.vel.x += random(-0.02, 0.05) + COIN_TILT * 0.02;
+                    c.pos.add(c.vel);
+                    c.rot += c.rotSpeed;
+                    
+                    if (c.pos.y > height + 80 || c.pos.x < -80 || c.pos.x > width + 80) {
+                        coins.splice(i, 1);
+                        continue;
+                    }
+                    
+                    push();
+                    translate(c.pos.x, c.pos.y);
+                    rotate(c.rot);
+                    fill(255, 215, 0, 240);
+                    stroke(255, 240, 120);
+                    strokeWeight(1.5);
+                    ellipse(0, 0, c.size, c.size * 1.2);
+                    fill(255, 255, 180, 220);
+                    noStroke();
+                    ellipse(-2, -2, c.size * 0.45, c.size * 0.45);
+                    stroke(180, 120, 0, 200);
+                    strokeWeight(2);
+                    noFill();
+                    line(-3, -4, 3, -4);
+                    line(0, -6, 0, 6);
+                    line(-3, 3, 3, 3);
+                    pop();
+                }
+                
+                if (frameCount % 4 === 0 && random() < 0.35) {
+                    spawnCoinFromHeart();
+                }
+            }
+            
+            document.getElementById('audio-btn').addEventListener('click', () => {
+                if (getAudioContext().state !== 'running') {
+                    getAudioContext().resume().then(initAudio);
+                } else {
+                    initAudio();
+                }
+            });
+            
+            window.setup = setup;
+            window.draw = draw;
+            window.windowResized = windowResized;
+        })();
+    </script>
+</body>
+</html>
